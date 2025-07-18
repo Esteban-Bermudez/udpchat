@@ -37,7 +37,8 @@ func main() {
 	}
 	log.Printf("Listening on port %s", p)
 
-	c.SetReadBuffer(1024 * 1024) // Set read buffer size to 1MB
+	c.SetReadBuffer(1024 * 1024)
+	// Receive UDP messages
 	go func() {
 		for {
 			buf := make([]byte, 1024)
@@ -51,7 +52,7 @@ func main() {
 		}
 	}()
 
-	// Send UDP messages to other peer
+	// Send UDP messages
 	for {
 		var msg string
 		fmt.Print("You: ")
