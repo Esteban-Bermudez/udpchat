@@ -6,66 +6,74 @@ import (
 	"log"
 	"net"
 	"os"
-	"strconv"
+	"strings"
+
+	"github.com/pion/stun"
+	"github.com/Esteban-Bermudez/udpchat/pkg/udpchat"
 )
 
 func main() {
-	if len(os.Args) < 4 {
-		log.Fatal("Usage: udpchat <my-port> <connect-port> <ip>")
-	}
-
-	p := os.Args[1]
-	cp := os.Args[2]
-	conIP := net.ParseIP(os.Args[3])
-
-	port, err := strconv.Atoi(p)
-	if err != nil {
-		log.Fatalf("Invalid port number: %v", err)
-	}
-	conPort, err := strconv.Atoi(cp)
-	if err != nil {
-		log.Fatalf("Invalid port number: %v", err)
-	}
-
-	fmt.Println("UDP Chat Server", net.IPv4zero)
 	c, err := net.ListenUDP("udp", &net.UDPAddr{
-		Port: port,
-		IP:   net.IPv4zero,
+		IP:   net.IPv4allrouter, // Listen on all interfaces
 	})
 	if err != nil {
-		log.Fatalf("Failed to listen on port %s: %v", p, err)
+		log.Fatalf("Failed to listen on UDP: %v", err)
 	}
-	log.Printf("Listening on port %s", p)
+	log.Printf("Listening internally on %s\n", c.LocalAddr())
 
-	c.SetReadBuffer(1024 * 1024)
-	// Receive UDP messages
-	go func() {
-		for {
-			buf := make([]byte, 1024)
-			n, addr, err := c.ReadFromUDP(buf)
-			if err != nil {
-				log.Printf("Error reading from UDP: %v", err)
-				continue
-			}
-			fmt.Printf("\r%s: %s\n", addr, string(buf[:n]))
-			fmt.Print("\rYou: ")
-		}
-	}()
+	stunServerAddr := "stun.l.google.com:19302"
+	log.Printf("Contacting STUN server %s to find public address", stunServerAddr)
 
-	// Send UDP messages
-	for {
-		var msg string
-		fmt.Print("You: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			msg = scanner.Text()
-		}
-		addr := &net.UDPAddr{
-			Port: conPort,
-			IP: conIP,
-		}
-		if _, err := c.WriteToUDP([]byte(msg), addr); err != nil {
-			log.Printf("Error sending UDP message: %v", err)
-		}
+	raddr, err := net.ResolveUDPAddr("udp", stunServerAddr)
+	if err != nil {
+		log.Fatalf("Failed to resolve STUN server address: %v", err)
 	}
+
+	// Build the STUN Binding Request message
+	msg := stun.MustBuild(stun.TransactionID, stun.BindingRequest)
+
+	// Send the request to the STUN server
+	_, err = c.WriteTo(msg.Raw, raddr)
+	if err != nil {
+		log.Fatalf("Failed to send STUN request: %v", err)
+	}
+
+	// Read the response
+	buf := make([]byte, 1024)
+	n, _, err := c.ReadFrom(buf)
+	if err != nil {
+		log.Fatalf("Failed to read STUN response: %v", err)
+	}
+
+	res := &stun.Message{Raw: buf[:n]}
+	if err := res.Decode(); err != nil {
+		log.Fatalf("Failed to decode STUN response: %v", err)
+	}
+
+	var xorMappedAddr stun.XORMappedAddress
+	if err := xorMappedAddr.GetFrom(res); err != nil {
+		log.Fatalf("Failed to get XOR-MAPPED-ADDRESS from STUN response: %v", err)
+	}
+
+	publicAddr := &net.UDPAddr{IP: xorMappedAddr.IP, Port: xorMappedAddr.Port}
+	log.Printf("My public address: %s", publicAddr)
+
+	// Prompt for peer's address
+	fmt.Print("Enter peer's address (ip:port): ")
+	reader := bufio.NewReader(os.Stdin)
+	peerAddrStr, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatalf("Failed to read peer address: %v", err)
+	}
+	peerAddrStr = strings.TrimSpace(peerAddrStr)
+
+	fmt.Printf("Connecting to peer at %s\n", peerAddrStr)
+	// Resolve peer's address
+	peerAddr, err := net.ResolveUDPAddr("udp", peerAddrStr)
+	if err != nil {
+		log.Fatalf("Failed to resolve peer address: %v", err)
+	}
+
+	// Start chat
+	udpchat.Start(c, peerAddr)
 }
