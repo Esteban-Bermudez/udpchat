@@ -17,6 +17,9 @@ func main() {
 	log.Printf("Listening internally on %s\n", c.LocalAddr())
 
 	// Connect to peer and start chat
-	peerAddr := udpchat.Connect(c)
+	peerAddr, err := udpchat.Connect(c)
+	if err != nil {
+		log.Fatalf("Failed to connect to peer: %v", err)
+	}
 	udpchat.Start(c, peerAddr)
 }

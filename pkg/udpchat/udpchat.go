@@ -13,9 +13,12 @@ import (
 
 // Connect uses a STUN server to discover the public address and prompts for the
 // peer's address. It returns the resolved peer address.
-func Connect(c *net.UDPConn) *net.UDPAddr {
+func Connect(c *net.UDPConn) (*net.UDPAddr, error) {
 	stunServerAddr := "stun.l.google.com:19302"
-	publicAddr := publicAddr(c, stunServerAddr)
+	publicAddr, err := publicAddr(c, stunServerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover public address: %w", err)
+	}
 	log.Printf("My public address: %s", publicAddr)
 
 	// Prompt for peer's address
@@ -23,7 +26,7 @@ func Connect(c *net.UDPConn) *net.UDPAddr {
 	reader := bufio.NewReader(os.Stdin)
 	peerAddrStr, err := reader.ReadString('\n')
 	if err != nil {
-		log.Fatalf("Failed to read peer address: %v", err)
+		return nil, fmt.Errorf("failed to read peer address: %w", err)
 	}
 	peerAddrStr = strings.TrimSpace(peerAddrStr)
 
@@ -31,20 +34,20 @@ func Connect(c *net.UDPConn) *net.UDPAddr {
 	// Resolve peer's address
 	peerAddr, err := net.ResolveUDPAddr("udp", peerAddrStr)
 	if err != nil {
-		log.Fatalf("Failed to resolve peer address: %v", err)
+		return nil, fmt.Errorf("failed to resolve peer address: %w", err)
 	}
 
-	return peerAddr
+	return peerAddr, nil
 }
 
 // publicAddr contacts the STUN server to discover the public address of the UDP
 // connection.
-func publicAddr(c *net.UDPConn, stunAddr string) *net.UDPAddr {
+func publicAddr(c *net.UDPConn, stunAddr string) (*net.UDPAddr, error) {
 	log.Printf("Contacting STUN server %s to find public address", stunAddr)
 
 	raddr, err := net.ResolveUDPAddr("udp", stunAddr)
 	if err != nil {
-		log.Fatalf("Failed to resolve STUN server address: %v", err)
+		return nil, fmt.Errorf("failed to resolve STUN server address: %w", err)
 	}
 
 	// Build the STUN Binding Request message
@@ -53,29 +56,29 @@ func publicAddr(c *net.UDPConn, stunAddr string) *net.UDPAddr {
 	// Send the request to the STUN server
 	_, err = c.WriteTo(msg.Raw, raddr)
 	if err != nil {
-		log.Fatalf("Failed to send STUN request: %v", err)
+		return nil, fmt.Errorf("failed to send STUN request: %w", err)
 	}
 
 	// Read the response
 	buf := make([]byte, 1024)
 	n, _, err := c.ReadFrom(buf)
 	if err != nil {
-		log.Fatalf("Failed to read STUN response: %v", err)
+		return nil, fmt.Errorf("failed to read STUN response: %w", err)
 	}
 
 	res := &stun.Message{Raw: buf[:n]}
 	if err := res.Decode(); err != nil {
-		log.Fatalf("Failed to decode STUN response: %v", err)
+		return nil, fmt.Errorf("failed to decode STUN response: %w", err)
 	}
 
 	var xorMappedAddr stun.XORMappedAddress
 	if err := xorMappedAddr.GetFrom(res); err != nil {
-		log.Fatalf("Failed to get XOR-MAPPED-ADDRESS from STUN response: %v", err)
+		return nil, fmt.Errorf("failed to get XOR-MAPPED-ADDRESS: %w", err)
 	}
 
 	publicAddr := &net.UDPAddr{IP: xorMappedAddr.IP, Port: xorMappedAddr.Port}
 
-	return publicAddr
+	return publicAddr, nil
 }
 
 // Start handles the UDP chat logic.
